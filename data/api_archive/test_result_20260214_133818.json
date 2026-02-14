@@ -1,0 +1,18 @@
+{
+  "accident_date": "2025-10-05",
+  "time_of_day": "unknown",
+  "location_country": "United States",
+  "location_state_region": "Wisconsin",
+  "location_peak_area": "Devil's Lake State Park",
+  "route_name": {},
+  "route_difficulty": {},
+  "risk_factors": "Rappel Error",
+  "climbing_style": "Descent",
+  "party_members": [
+    {
+      "name": "Pete Cleveland",
+      "age": 84,
+      "status": "fatal injury"
+    }
+  ]
+}

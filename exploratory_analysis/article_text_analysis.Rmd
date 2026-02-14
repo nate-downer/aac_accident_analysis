@@ -1,0 +1,575 @@
+---
+title: "AAC Accident Report - Article Text Analysis"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+## libraries ----
+
+library(tidyverse)   
+library(readr)       
+library(stringr)    
+library(lubridate)  
+library(scales)
+library(ggplot2)
+library(DT)         # interactive tables
+
+## inputs ----
+
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+
+accidents_file  <- "data/article_text_20260214.csv"
+
+## globals ----
+
+report_colors <- c(
+    "orange",
+    "grey50",
+    "grey60",
+    "grey70"
+)
+
+```
+
+
+### Visualization of Sample Data
+
+Start by visualizing how many articles we are workign with and see what kind of usable metadata we have.
+
+```{r sample_table}
+
+articles_raw <- read_csv(accidents_file, show_col_types = FALSE)
+
+articles_tagged <- articles_raw %>%
+    mutate(
+        article_type = case_when(
+            is_accident_report == TRUE ~ "Accident Report",
+            grepl('accident|injury', body_text) ~ "Other - Accident Mention",
+            TRUE ~ "Other - No Accident",
+        )
+    )
+
+articles_tagged %>%
+    filter(!grepl("know the ropes", tolower(title))) %>%
+    mutate(body_text = paste(substr(body_text, 1, 50), "[...]")) %>%
+    group_by(article_type) %>%
+    slice_head(n = 10) %>%
+    ungroup() %>%
+    arrange(article_type) %>%
+    datatable(options = list(scrollX = TRUE, pageLength = 5))
+
+```
+
+```{r visualize distribution over time, fig.width=10.5}
+
+articles_tagged %>%
+    group_by(publication_year, article_type) %>%
+    summarise(articles = n()) %>%
+    ungroup() %>%
+    mutate(
+        date = publication_year,
+        date_type = "Publication Year"
+    ) %>%
+    bind_rows(
+        articles_tagged %>%
+            group_by(climb_year, article_type) %>%
+            summarise(articles = n()) %>%
+            ungroup() %>%
+            mutate(
+                date = climb_year,
+                date_type = "Climb Year"
+            )
+    ) %>%
+    ggplot(aes(x = date, y = articles, fill = article_type)) +
+    geom_vline(xintercept = 2012, color = "grey60") +
+    geom_col() +
+    facet_wrap(~date_type, nrow = 1) +
+    scale_fill_manual(values = report_colors, name = "Article Type") +
+    labs(
+        title = "Reports by Climb and Publication Year",
+        subtitle = "Metadata fro climb year is inconsistent before 2012"
+    )
+
+```
+
+```{r summary numbers, fig.width=10.5}
+
+articles_tagged %>%
+    filter(article_type %in% c("Accident Report", "Other - Accident Mention")) %>%
+    mutate(
+        publication_decade = if_else(
+            is.na(publication_year),
+            NA_character_,
+            paste0(substr(as.character(publication_year), 1, 3), "0")
+        )
+    ) %>%
+    group_by(publication_decade, article_type) %>%
+    summarise(articles = n()) %>%
+    ungroup() %>%
+    ggplot(aes(y = publication_decade, x = articles, label = articles, fill = article_type)) +
+    geom_col() +
+    geom_text(aes(x = 0), hjust = 0) +
+    facet_wrap(~article_type, nrow = 1) +
+    scale_fill_manual(values = report_colors) +
+    labs(title = "Accident Reports by Publication Decade") +
+    theme(legend.position = 'none')
+
+```
+
+#### Notes on Data Distribution:
+
+- The majority of files are not tagged accident reports; in total we have `r nrow(articles_raw[articles_raw$is_accident_report == TRUE, ])` accident reports to work with.
+- Most of these reports come from the 90s and 80s, with only 194 commming from 2020 or later, this suggest our filtering may be missing some of the newer reports.
+- There are a further `r nrow(articles_raw[articles_tagged$article_type == 'Other - Accident Mention', ])` articles that mention an accident or injury, but are not tagged as ANAC. Most of these come from 2010 or later.
+- The next state of the analysis should include all of these 
+
+---
+
+### Create API Call and Prompt to Parse Accident Report Text
+
+This analysis calls the Claude API, and uses the Haiku 4.5 model to read the accident report and create a json file that includes the risk factors and other key data in a structured format.
+
+```{r create prompt}
+
+## additional libraries ----
+
+library(httr2)
+library(jsonlite)
+library(dplyr)
+library(readr)
+library(glue)
+
+`%||%` <- function(x, y) if (is.null(x)) y else x
+
+
+## api configuration ----
+
+input_file  <- "data/article_text_20260214.csv"
+output_file <- "data/article_extracted.csv"
+model       <- "claude-haiku-4-5-20251001"
+delay_sec   <- 0.6   # stay within API rate limits
+
+api_key <- Sys.getenv("ANTHROPIC_API_KEY")
+
+
+## Call Claude and return parsed list ----
+
+call_claude <- function(body_text) {
+    resp <- request("https://api.anthropic.com/v1/messages") %>%
+        req_headers(
+        "x-api-key"         = api_key,
+        "anthropic-version" = "2023-06-01"
+        ) %>%
+        req_body_json(list(
+        model      = model,
+        max_tokens = 1024,
+        system     = system_prompt,
+        messages   = list(
+            list(role = "user", content = body_text)
+        )
+        ), auto_unbox = TRUE) %>%
+        req_error(is_error = \(r) FALSE) %>%  # handle errors manually
+        req_perform()
+
+    if (resp_status(resp) != 200) {
+        stop("API error ", resp_status(resp), ": ", resp_body_string(resp))
+    }
+
+    raw_text <- resp %>%
+        resp_body_json() %>%
+        .[["content"]] %>%
+        .[[1]] %>%
+        .[["text"]] %>%
+        str_remove_all("^```json\\s*|^```\\s*|\\s*```$")
+
+    fromJSON(raw_text)
+}
+
+```
+
+---
+
+#### Prompt Structure and Risk Categories - Inital Draft:
+
+This analysis is builds on a NLP analysis that Eliot Caroom did in 2020, and uses the risk categories that he defines. His analysis can be found on [GitHub](https://github.com/ecaroom/climbing-accidents), and a summary of the results were included in Rock and Ice magaziene:
+
+> Caroom, Eliot. Climbing Accidents Data Repository: Analyzing 30 Years of Accident Reports. Rock & Ice Issue 265, September 2020, pages 18-23.
+
+Eliot's risk factors differ from the ones used in offcial AAC publications, but have substantial overlap. Note that the risk category defenitions have been streamlined to use tokens more efficiently, and don't exactly match the defenitions cited in Eliot's documentation.
+
+```{r draft prompt}
+
+## prompt ----
+
+system_prompt <- "You are an expert analyst of mountaineering accident reports.
+Extract structured information from the report and return it as a JSON object
+with exactly these fields:
+
+- accident_date: date of the accident in YYYY-MM-DD format, or null if unknown
+- time_of_day: one of 'morning', 'afternoon', 'evening', 'night', 'unknown'
+- location_country: country where the accident occurred
+- location_state_region: state, province, or region (null if unknown)
+- location_peak_area: specific mountain, peak, or climbing area name (null if unknown)
+- route_name: name of the specific climbing route (null if not mentioned)
+- route_difficulty: grade of the climb, likely matches one of these styles:
+    - '5.10a PG'
+    - '5.4'
+    - '5.9X'
+    - '4th Class'
+    - 'M4'
+    - 'WI4'
+    - 'C1'
+    - 'A4'
+    - '6b'
+    - 'V12'
+- risk_factors: array of strings describing risk factors that contribute to the accident; strings must be one of the following:
+    - 'Piton/Ice Screw'
+    - 'Ascent Illness': HAPE, HACE, AMS, or ascending too fast.
+    - 'Crampon Issues': Any crampon difficulty — clearing balled snow, putting on/taking off, or misuse (e.g. glissading with crampons).
+    - 'Glissading'
+    - 'Ski-related': Only when skiing at time of accident; not applied when skis are off.
+    - 'Poor Position'
+    - 'Visibility': Dark, whiteout, or snowblind at time of accident (not during rescue). Includes being late in the day with diminishing light.
+    - 'Severe Weather / Act of God': Includes lightning.
+    - 'Natural Rockfall': Rockfall not caused by humans; excludes objects dislodged by climbing parties.
+    - 'Wildlife'
+    - 'Avalanche'
+    - 'Poor Cond/Seasonal Risk'
+    - 'Cornice / Snow Bridge Collapse'
+    - 'Bergschrund'
+    - 'Crevasse / Moat / Berschrund'
+    - 'Icefall / Serac / Ice Avalanche'
+    - 'Exposure'
+    - 'Non-Ascent Illness'
+    - 'Off-route': Straying from the intended route; excludes failure to follow ranger/guide directions.
+    - 'Rushed'
+    - 'Run Out'
+    - 'Crowds'
+    - 'Inadequate Food/Water'
+    - 'No Helmet'
+    - 'Late in Day'
+    - 'Late Start'
+    - 'Party Separated'
+    - 'Ledge Fall': Injurious landing on a ledge; excludes breaking ledges (see Handhold/Foothold Broke) and incidental/fortuitous landings.
+    - 'Gym / Artificial'
+    - 'Gym Climber'
+    - 'Fatigue'
+    - 'Large Group'
+    - 'Distracted'
+    - 'Object Dropped/Dislodged': Objects dropped or dislodged by climbing parties; includes dropped rope and gear. Excludes natural rockfall.
+    - 'Handhold/Foothold Broke'
+    - 'Knot & Tie-in Error'
+    - 'No Backup or End Knot'
+    - 'Gear Broke'
+    - 'Intoxicated'
+    - 'Inadequate Equipment': Missing or insufficient clothing/gear; excludes helmet (has its own category).
+    - 'Inadequate Protection / Pulled': No or insufficient protection placed.
+    - 'Anchor Failure / Error': Errors building or failures of anchors; can co-occur with Rappel/Lowering Error.
+    - 'Stranded / Lost / Overdue'
+    - 'Belay Error'
+    - 'Rappel Error'
+    - 'Lowering Error'
+    - 'Miscommunication'
+    - 'Pendulum'
+- climbing_style: array of strings describing the climbing activity at the point of the accident; strings must be one of the following:
+    - 'Descent'
+    - 'Roped'
+    - 'Trad Climbing'
+    - 'Sport'
+    - 'Top-Rope'
+    - 'Aid & Big Wall Climbing'
+    - 'Unroped': Includes glissade and self-arrest incidents.
+    - 'Solo': Includes self-belayed climbing.
+    - 'Climbing Alone'
+    - 'Bouldering'
+    - 'Non-climbing'
+    - 'Alpine/Mountaineering'
+    - 'Ice Climbing'
+- party_members: a nested object containing the following fields:
+    - name: the climber's name (only include people involved in the incident)
+    - age: the climber's age as a number (null if unknown)
+    - status: one of 'no injury', 'minor injury', 'serious injury', 'fatal injury', 'unknown'
+
+Return only the JSON object, no other text."
+
+
+## Test prompt with select articles ----
+
+reports <- articles_tagged %>%
+    filter(!grepl("know the ropes", tolower(title))) %>%
+    filter(article_type %in% c("Accident Report", "Other - Accident Mention")) %>%
+    mutate(
+        all_text = paste(
+            title, 
+            subtitle, 
+            if_else(nchar(author) > 5, glue("Author: {author}"), ""),
+            if_else(nchar(publication_year) > 5, glue("Publication Year: {publication_year}"), ""),
+            if_else(nchar(climb_year) > 5, glue("Climb Year: {climb_year}"), ""),
+            body_text, 
+            sep = "\n"
+        )
+    )
+
+test_text <- as.character(paste(reports[10,12]))
+
+# test_text
+# test_result <- call_claude(test_text)
+# write_json(test_result, path = paste0("data/api_archive/test_result_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".json"), auto_unbox = TRUE, pretty = TRUE)
+
+```
+
+### Test Output - Risk Factors
+
+```{r read test results, echo=FALSE}
+
+## Read the most recent test result from api_archive ----
+
+test_result <- read_json('data/api_archive/test_result_20260214_134410.json')
+
+# scalar fields as a transposed key-value table
+test_result_scalar <- test_result[!names(test_result) %in% c("risk_factors", "climbing_style", "party_members")]
+
+tibble(
+  field = names(test_result_scalar),
+  value = map_chr(test_result_scalar, \(x) if (is.null(x) || length(x) == 0) NA_character_ else as.character(x))
+) %>%
+  bind_rows(
+    tibble(field = "risk_factors",  value = paste(test_result$risk_factors,  collapse = ", ")),
+    tibble(field = "climbing_style", value = paste(test_result$climbing_style, collapse = ", "))
+  ) %>%
+  datatable(colnames = c("Field", "Value"), options = list(dom = "t", pageLength = 20))
+
+```
+
+### Test Optupt - Climbers
+
+```{r party members, echo=FALSE}
+
+# party members as a separate table
+map_dfr(test_result$party_members, as_tibble) %>%
+  datatable(options = list(dom = "t"))
+
+```
+
+Link to article referecned: `r as.character(paste(reports[10, 2]))`
+
+---
+
+#### Analysis of Test Outputs:
+- This is generally a good summary, with the all of the descriptive information (date, route name, etc.) being exactly right.
+- The missing information (route difficulty, party member ages) is correctly ommited.
+- The climbing style is mostly correct, but it would have been good to see the 'Unropped' tag since the analysis noted that Skier 1 should have been belayed down the first pitch of skiing to reduce the consequence of triggering an avalache.
+- The risk factors are mostly good with tow exceptions:
+  - The 'Bergshrund' tag is included, but while this was a hazard faced on the ascent, it did not play a role in the accident itself.
+  - The tag 'Expert Halo' does not come from the explicit list I gave the AI. 
+
+#### Inclusion of Social Factors:
+
+This example shows that there is an oppertunity to include more social factors in the output. The accident report includes a list of common social/psychologicl factors (FACETS) that we can use as a basis:
+- Familiarity
+- Acceptance
+- Consistency
+- Expert Halo
+- Tracks/Scarcity
+- Social Facilitation
+
+In the next step, I will restructure the prompt to seperatly check for four differnt categories of risk factors:
+- Immediate Cause: As defined in ANAC
+- Objective / Enviornmental Risk: Risk imposed by the route itself
+- Subjective Risk: Risk added the climbers and their decisions
+- Social: Subjective risk that is social or psychological in nature
+
+For a more complete summary of FACET risk factor defenitions see [AAC Calgery's](https://www.acccalgary.ca/2015/05/human-factors-facets/) descriptions.
+
+---
+
+### Updated Prompt:
+
+```{r updated prompt}
+
+## prompt ----
+
+system_prompt <- "You are an expert analyst of mountaineering accident reports.
+Extract structured information from the report and return it as a JSON object
+with exactly these fields:
+
+- accident_date: date of the accident in YYYY-MM-DD format, or null if unknown
+- time_of_day: one of 'morning', 'afternoon', 'evening', 'night', 'unknown'
+- location_country: country where the accident occurred
+- location_state_region: state, province, or region (null if unknown)
+- location_peak_area: specific mountain, peak, or climbing area name (null if unknown)
+- route_name: name of the specific climbing route (null if not mentioned)
+- route_difficulty: grade of the climb, likely matches one of these styles:
+    - '5.10a PG'
+    - '5.4'
+    - '5.9X'
+    - '4th Class'
+    - 'M4'
+    - 'WI4'
+    - 'C1'
+    - 'A4'
+    - '6b'
+    - 'V12'
+- immediate_cause: array of strings describing risk factors that directly caused the accident; strings must be one of the following:
+    - 'Fall on Rock'
+    - 'Fall on Ice'
+    - 'Fall on Snow'
+    - 'Falling Rock, Ice, Object'
+    - 'Illness'
+    - 'Stranded / Lost'
+    - 'Avalanche'
+    - 'Rappel Failure / Error'
+    - 'Lowering Error'
+    - 'Fall from Anchor'
+    - 'Anchor Failure'
+    - 'Exposure'
+    - 'Glissade Error'
+    - 'Protection Pulled Out'
+    - 'Failure to Follow Route'
+    - 'Fall into Crevasse / Moat'
+    - 'Faulty use of Crampons'
+    - 'Ascending too Fast'
+    - 'Skiing'
+    - 'Lightning'
+    - 'Equipment Failure'
+    - 'Unknown'
+- objective_risk_factors: array of strings describing the environmental risk factors that contributed to the accident; strings must be one of the following:
+    - 'Visibility': Dark, whiteout, or snowblind at time of accident (not during rescue). Includes diminishing light late in the day.
+    - 'Severe Weather / Act of God': Includes lightning.
+    - 'Natural Rockfall': Rockfall not caused by humans; excludes objects dislodged by climbing parties.
+    - 'Wildlife'
+    - 'Poor Cond/Seasonal Risk'
+    - 'Cornice / Snow Bridge Collapse'
+    - 'Crevasse / Moat / Bergschrund'
+    - 'Icefall / Serac / Ice Avalanche'
+    - 'Non-Ascent Illness'
+    - 'Gym / Artificial'
+    - 'Handhold/Foothold Broke'
+    - 'Inadequate Protection Available': Route is difficult or impossible to protect.
+- subjective_risk_factors: array of strings describing the gear and skill based risk factors that contributed to the accident; strings must be one of the following:
+    - 'Piton/Ice Screw'
+    - 'Crampon Issues': Crampon difficulty — balling snow, putting on/off, or misuse (e.g. glissading with crampons).
+    - 'Poor Position'
+    - 'Off-route': Straying from the intended route; excludes failure to follow ranger/guide directions.
+    - 'Run Out'
+    - 'Inadequate Food/Water'
+    - 'No Helmet'
+    - 'Late in Day'
+    - 'Late Start'
+    - 'Fatigue'
+    - 'Object Dropped/Dislodged': Party-dislodged objects including rope and gear; excludes natural rockfall.
+    - 'Knot & Tie-in Error'
+    - 'No Backup or End Knot'
+    - 'Gear Broke'
+    - 'Inadequate Equipment': Missing or insufficient clothing/gear; excludes helmet (has its own category).
+    - 'Inadequate Protection / Pulled': No or insufficient protection placed.
+    - 'Anchor Failure / Error': Anchor building errors or failures; can co-occur with Rappel/Lowering Error.
+    - 'Stranded / Lost / Overdue'
+    - 'Belay Error'
+    - 'Rappel Error'
+    - 'Lowering Error'
+    - 'Pendulum'
+- social_risk_factors: array of strings describing the social and psychological risk factors that contributed to the accident; strings must be one of the following:
+    - 'Rushed'
+    - 'Crowds'
+    - 'Party Separated'
+    - 'Gym Climber'
+    - 'Large Group'
+    - 'Distracted'
+    - 'Intoxicated'
+    - 'Miscommunication'
+    - 'Familiarity': Overconfidence in familiar terrain.
+    - 'Acceptance': Desire for group acceptance led to increased risk tolerance.
+    - 'Consistency': Overcommitment to a goal despite changing conditions.
+    - 'Expert Halo': Less experienced members deferred to a leader, accepting more risk than they would alone.
+    - 'Tracks/Scarcity': Perceived competition for first position or a closing window of opportunity.
+    - 'Social Facilitation': False sense of safety from the presence of other groups on the route.
+- climbing_style: array of strings describing the climbing activity at the point of the accident; strings must be one of the following:
+    - 'Descent'
+    - 'Roped'
+    - 'Trad Climbing'
+    - 'Sport'
+    - 'Top-Rope'
+    - 'Aid & Big Wall Climbing'
+    - 'Unroped': Includes glissade and self-arrest incidents.
+    - 'Solo': Includes self-belayed climbing.
+    - 'Climbing Alone'
+    - 'Bouldering'
+    - 'Non-climbing'
+    - 'Alpine/Mountaineering'
+    - 'Ice Climbing'
+- party_members: a nested object containing the following fields:
+    - name: the climber's name (only include people involved in the incident)
+    - age: the climber's age as a number (null if unknown)
+    - party_status: one of 'solo', 'party_member', 'party_leader', 'unknown'
+    - injury_level: one of 'no injury', 'minor injury', 'serious injury', 'fatal injury', 'unknown'
+
+Return only the JSON object, no other text."
+
+
+## Test prompt with select articles ----
+
+test_text <- as.character(paste(reports[10,12]))
+
+# test_text
+# test_result <- call_claude(test_text)
+# write_json(test_result, path = paste0("data/api_archive/test_result_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".json"), auto_unbox = TRUE, pretty = TRUE)
+
+```
+
+### Test Output - Risk Factors
+
+```{r read updated results, echo=FALSE}
+
+## Read the most recent test result from api_archive ----
+
+test_result <- read_json('data/api_archive/test_result_20260214_150041.json')
+
+# scalar fields as a transposed key-value table
+test_result_scalar <- test_result[!names(test_result) %in% c("immediate_cause", "objective_risk_factors", "subjective_risk_factors", "social_risk_factors", "climbing_style", "party_members")]
+
+tibble(
+  field = names(test_result_scalar),
+  value = map_chr(test_result_scalar, \(x) if (is.null(x) || length(x) == 0) NA_character_ else as.character(x))
+) %>%
+  bind_rows(
+    tibble(field = "immediate_cause",         value = paste(test_result$immediate_cause,         collapse = ", ")),
+    tibble(field = "objective_risk_factors",  value = paste(test_result$objective_risk_factors,  collapse = ", ")),
+    tibble(field = "subjective_risk_factors", value = paste(test_result$subjective_risk_factors, collapse = ", ")),
+    tibble(field = "social_risk_factors",     value = paste(test_result$social_risk_factors,     collapse = ", ")),
+    tibble(field = "climbing_style",          value = paste(test_result$climbing_style,          collapse = ", "))
+  ) %>%
+  datatable(colnames = c("Field", "Value"), options = list(dom = "t", pageLength = 25))
+
+```
+
+### Test Optupt - Climbers
+
+```{r updated party members, echo=FALSE}
+
+# party members as a separate table
+map_dfr(test_result$party_members, as_tibble) %>%
+  datatable(options = list(dom = "t"))
+
+```
+
+#### Analysis of Updated Outputs:
+- This is an improvement, and I like the way that causes are broken out into differnt categories, as this makes it easier for me to parse the data.
+- I have two small concerns:
+  - There was not a 'Cornice or Snow Bridge Collapse'. This is splitting hairs a bit, but the avalanch was trigged by the collapse of a wind slab.
+  - The article does not say that the party was late, or under a time pressure. They summitted around 2:25pm under clear skies.
+
+
+#### Next Steps:
+
+Additional refninement will be done testing the outputs across larger samples.
+
+---
+
+Analysis by Nate Downer
+
+Data from https://publications.americanalpineclub.org/

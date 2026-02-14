@@ -1,0 +1,8 @@
+# data
+data/article_archive/
+data/*.csv
+
+# R artifacts
+.Rhistory
+.RData
+.Rproj.user/

@@ -1,0 +1,37 @@
+{
+  "accident_date": "2024-05-07",
+  "time_of_day": "afternoon",
+  "location_country": "United States",
+  "location_state_region": "Alaska",
+  "location_peak_area": "Italy's Boot, Pika Glacier, Denali National Park",
+  "route_name": "Italy's Boot North Face",
+  "route_difficulty": {},
+  "immediate_cause": "Avalanche",
+  "objective_risk_factors": ["Poor Cond/Seasonal Risk", "Cornice / Snow Bridge Collapse"],
+  "subjective_risk_factors": ["Late in Day", "Inadequate Protection / Pulled", "Run Out"],
+  "social_risk_factors": ["Consistency", "Expert Halo", "Large Group"],
+  "climbing_style": ["Skiing", "Descent", "Alpine/Mountaineering"],
+  "party_members": [
+    {
+      "name": "Skier 1",
+      "party_status": "party_member",
+      "injury_level": "minor injury"
+    },
+    {
+      "party_status": "party_member",
+      "injury_level": "no injury"
+    },
+    {
+      "party_status": "party_member",
+      "injury_level": "no injury"
+    },
+    {
+      "party_status": "party_member",
+      "injury_level": "no injury"
+    },
+    {
+      "party_status": "party_member",
+      "injury_level": "no injury"
+    }
+  ]
+}
