@@ -19,6 +19,7 @@ input_file  <- "data/article_text_20260214.csv"
 output_file <- "data/article_extracted.csv"
 model       <- "claude-haiku-4-5-20251001"
 delay_sec   <- 0.6   # stay within API rate limits
+max_retries <- 2     # retry if extraction returns all NAs
 
 api_key <- Sys.getenv("ANTHROPIC_API_KEY")
 if (api_key == "") stop("ANTHROPIC_API_KEY environment variable is not set.")
@@ -218,14 +219,40 @@ flatten_extraction <- function(extracted, article_id, url) {
   )
 }
 
+## helper: detect all-NA extraction (key fields all missing = likely API failure) ----
+
+is_empty_result <- function(result) {
+  is.na(result$time_of_day) &&
+  is.na(result$location_country) &&
+  is.na(result$immediate_cause)
+}
+
 ## load input, filter to accident reports only ----
 
 articles_raw <- read_csv(input_file, show_col_types = FALSE)
 
 articles <- articles_raw %>%
-  filter(is_accident_report == TRUE, !is.na(body_text), body_text != "") %>%
+  mutate(
+    article_type = case_when(
+      is_accident_report == TRUE ~ "Accident Report",
+      grepl('accident|injury', body_text) ~ "Other - Accident Mention",
+      TRUE ~ "Other - No Accident",
+    )
+  ) %>%
+  filter(article_type %in% c("Accident Report", "Other - Accident Mention")) %>%
   filter(!grepl("know the ropes", tolower(title))) %>%
-  mutate(all_text = paste(title, subtitle, body_text, sep = " | "))
+  mutate(
+    all_text = paste(
+      title,
+      subtitle,
+      if_else(nchar(author) > 5, glue("Author: {author}"), ""),
+      if_else(!is.na(publication_year), glue("Publication Year: {publication_year}"), ""),
+      if_else(!is.na(climb_year), glue("Climb Year: {climb_year}"), ""),
+      body_text,
+      sep = "\n"
+    )
+  ) %>%
+  filter(publication_year == 2024)
 
 
 # resume: skip articles already in the output file
@@ -244,6 +271,16 @@ total <- nrow(articles)
 for (i in seq_len(total)) {
   row <- articles[i, ]
   message("(", i, "/", total, ") ", row$article_id, " — ", row$title)
+
+  attempt <- 0
+  result  <- NULL
+
+  while (attempt <= max_retries) {
+    if (attempt > 0) {
+      message("  Empty result — retrying (attempt ", attempt, "/", max_retries, ")...")
+      Sys.sleep(delay_sec * 2)
+    }
+    attempt <- attempt + 1
 
   result <- tryCatch({
     extracted <- call_claude(row$all_text)
@@ -269,6 +306,13 @@ for (i in seq_len(total)) {
       extraction_error        = e$message
     )
   })
+
+    if (!is_empty_result(result)) break
+  }
+
+  if (is_empty_result(result)) {
+    message("  All retries exhausted — saving empty result.")
+  }
 
   write_csv(result, output_file, append = file.exists(output_file))
 

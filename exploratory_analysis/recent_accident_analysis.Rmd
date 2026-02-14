@@ -1,0 +1,221 @@
+---
+title: "2024–2024–2025 AAC Accident Reports - Exploratory Analysis"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+## working directory ----
+
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+
+## libraries ----
+
+library(tidyverse)
+library(readr)
+library(stringr)
+library(scales)
+library(ggplot2)
+library(forcats)
+library(tidyr)
+library(DT)
+
+## globals ----
+
+report_colors <- c("orange", "grey50", "grey60", "grey70")
+
+injury_colors <- c(
+  "Fatal Injury"   = "orange",
+  "Serious Injury" = "grey50",
+  "Minor Injury"   = "grey70"
+)
+
+```
+
+```{r load_data, include=FALSE}
+
+accident_data <- read_csv("data/accident_data.csv",  show_col_types = FALSE)
+party_members <- read_csv("data/party_members.csv",  show_col_types = FALSE)
+
+```
+
+### Reports and Injuries by State
+
+Note that all data is extracted from publicly avalible accident reports from the [AAC](https://publications.americanalpineclub.org/), and the data is assumed to be incomplete:
+
+- Not all accidents are recorded, or shared with the AAC
+- Not all repored accidents have articles that are publicly avalible (Note that the injury totals in this analysis do not match the reported totals in ANAC and generally undercount injury totals)
+- The data extraction and tagging process is imperfect
+
+For more information on how the accident risk factors are extraced, see the Article Text Analysis elsewhere in this repo.
+
+```{r reports_by_state, fig.width=10.5}
+
+accident_data %>%
+  filter(!is.na(location_state_region)) %>%
+  count(location_state_region, sort = TRUE) %>%
+  slice_head(n = 20) %>%
+  mutate(location_state_region = fct_reorder(location_state_region, n)) %>%
+  ggplot(aes(x = n, y = location_state_region)) +
+  geom_col(fill = "orange") +
+  geom_text(aes(label = n), hjust = -0.2, size = 3.5) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1))) +
+  labs(
+    title = "Accident Reports by State / Region",
+    subtitle = "Top 20 states, 2024–2025",
+    x = "Reports",
+    y = NULL
+  )
+
+```
+
+```{r injuries_by_state, fig.width=10.5}
+
+accident_data %>%
+  filter(!is.na(location_state_region)) %>%
+  group_by(location_state_region) %>%
+  summarise(
+    `Fatal Injury`   = sum(n_fatal_injury,   na.rm = TRUE),
+    `Serious Injury` = sum(n_serious_injury, na.rm = TRUE),
+    `Minor Injury`   = sum(n_minor_injury,   na.rm = TRUE)
+  ) %>%
+  mutate(total = `Fatal Injury` + `Serious Injury` + `Minor Injury`) %>%
+  slice_max(total, n = 20) %>%
+  select(-total) %>%
+  pivot_longer(-location_state_region, names_to = "severity", values_to = "n") %>%
+  mutate(
+    severity             = factor(severity, levels = names(injury_colors)),
+    location_state_region = fct_reorder(
+      location_state_region,
+      n,
+      .fun = sum
+    )
+  ) %>%
+  ggplot(aes(x = n, y = location_state_region, fill = severity)) +
+  geom_col() +
+  scale_fill_manual(values = injury_colors, name = "Severity") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05))) +
+  labs(
+    title = "Injuries by State / Region",
+    subtitle = "Top 20 states by total injuries, 2024–2025",
+    x = "People",
+    y = NULL
+  )
+
+```
+
+---
+
+### Reports and Injuries by Immediate Cause
+
+```{r reports_by_cause, fig.width=10.5}
+
+accident_data %>%
+  filter(!is.na(immediate_cause)) %>%
+  separate_rows(immediate_cause, sep = " \\| ") %>%
+  count(immediate_cause, sort = TRUE) %>%
+  mutate(immediate_cause = fct_reorder(immediate_cause, n)) %>%
+  ggplot(aes(x = n, y = immediate_cause)) +
+  geom_col(fill = "orange") +
+  geom_text(aes(label = n), hjust = -0.2, size = 3.5) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1))) +
+  labs(
+    title = "Accident Reports by Immediate Cause",
+    subtitle = "2024–2025 - Reports with multiple causes counted once per cause",
+    x = "Reports",
+    y = NULL
+  )
+
+```
+
+```{r injuries_by_cause, fig.width=10.5}
+
+accident_data %>%
+  filter(!is.na(immediate_cause)) %>%
+  separate_rows(immediate_cause, sep = " \\| ") %>%
+  group_by(immediate_cause) %>%
+  summarise(
+    `Fatal Injury`   = sum(n_fatal_injury,   na.rm = TRUE),
+    `Serious Injury` = sum(n_serious_injury, na.rm = TRUE),
+    `Minor Injury`   = sum(n_minor_injury,   na.rm = TRUE)
+  ) %>%
+  pivot_longer(-immediate_cause, names_to = "severity", values_to = "n") %>%
+  mutate(
+    severity       = factor(severity, levels = names(injury_colors)),
+    immediate_cause = fct_reorder(immediate_cause, n, .fun = sum)
+  ) %>%
+  ggplot(aes(x = n, y = immediate_cause, fill = severity)) +
+  geom_col() +
+  scale_fill_manual(values = injury_colors, name = "Severity") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05))) +
+  labs(
+    title = "Injuries by Immediate Cause",
+    subtitle = "2024–2025 - Accidents with multiple causes counted once per cause",
+    x = "People",
+    y = NULL
+  )
+
+```
+
+---
+
+### Party Size Distribution
+
+```{r party_size, fig.width=10.5}
+
+accident_data %>%
+  filter(!is.na(party_size), party_size > 1) %>%
+  ggplot(aes(x = party_size)) +
+  geom_histogram(binwidth = 1, fill = "orange") +
+  scale_x_continuous(breaks = seq(1, max(accident_data$party_size, na.rm = TRUE))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+  labs(
+    title = "Distribution of Party Size",
+    subtitle = "2024–2025 - Excludes solo climbers and reports with no party size data",
+    x = "Party Size",
+    y = "Reports"
+  )
+
+```
+
+---
+
+### Injuries by YDS Grade
+
+```{r injuries_by_grade, fig.width=10.5}
+
+accident_data %>%
+  filter(!is.na(yds_grade)) %>%
+  group_by(yds_grade, yds_grade_index) %>%
+  summarise(
+    `Fatal Injury`   = sum(n_fatal_injury,   na.rm = TRUE),
+    `Serious Injury` = sum(n_serious_injury, na.rm = TRUE),
+    `Minor Injury`   = sum(n_minor_injury,   na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(c(`Fatal Injury`, `Serious Injury`, `Minor Injury`),
+               names_to = "severity", values_to = "n") %>%
+  mutate(
+    severity  = factor(severity, levels = names(injury_colors))
+  ) %>%
+  ggplot(aes(x = reorder(yds_grade, yds_grade_index), y = n, fill = severity)) +
+  geom_col() +
+  scale_fill_manual(values = injury_colors, name = "Severity") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+  labs(
+    title = "Injuries by YDS Grade",
+    subtitle = "2024–2025 - Grades simplified to nearst full grade (e.g. 5.10a = 5.10)",
+    x = "YDS Grade",
+    y = "Injuries"
+  )
+
+```
+
+---
+
+Analysis by Nate Downer
+
+Data from https://publications.americanalpineclub.org/
