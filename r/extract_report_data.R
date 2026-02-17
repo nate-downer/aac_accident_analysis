@@ -153,7 +153,7 @@ call_claude <- function(body_text) {
     ) %>%
     req_body_json(list(
       model      = model,
-      max_tokens = 1024,
+      max_tokens = 2048,
       system     = system_prompt,
       messages   = list(
         list(role = "user", content = body_text)
@@ -252,7 +252,8 @@ articles <- articles_raw %>%
       sep = "\n"
     )
   ) %>%
-  filter(publication_year == 2024)
+  # filter(publication_year < 2024) %>%
+  filter(publication_year >= 2020) 
 
 
 # resume: skip articles already in the output file
@@ -320,3 +321,101 @@ for (i in seq_len(total)) {
 }
 
 message("Done. Output saved to: ", output_file)
+
+
+
+
+
+
+## reprocess missing rows ----
+
+# identify rows where extraction produced no usable data or errored
+extracted_all <- read_csv(output_file, show_col_types = FALSE)
+
+missing_ids <- extracted_all %>%
+  filter(
+    (is.na(time_of_day) & is.na(location_country) & is.na(immediate_cause)) |
+    !is.na(extraction_error)
+  ) %>%
+  pull(article_id)
+
+if (length(missing_ids) == 0) {
+  message("No missing rows to reprocess.")
+} else {
+  message(length(missing_ids), " missing rows found — reprocessing...")
+
+  # pull article text for missing rows and rebuild all_text
+  articles_missing <- articles_raw %>%
+    filter(article_id %in% missing_ids) %>%
+    mutate(
+      all_text = paste(
+        title,
+        subtitle,
+        if_else(!is.na(author) & nchar(author) > 5, glue("Author: {author}"), ""),
+        if_else(!is.na(publication_year), glue("Publication Year: {publication_year}"), ""),
+        if_else(!is.na(climb_year), glue("Climb Year: {climb_year}"), ""),
+        body_text,
+        sep = "\n"
+      )
+    )
+
+  # remove missing rows from output file so they can be replaced
+  extracted_all %>%
+    filter(!article_id %in% missing_ids) %>%
+    write_csv(output_file)
+
+  total_missing <- nrow(articles_missing)
+
+  for (i in seq_len(total_missing)) {
+    row <- articles_missing[i, ]
+    message("(", i, "/", total_missing, ") ", row$article_id, " — ", row$title)
+
+    attempt <- 0
+    result  <- NULL
+
+    while (attempt <= max_retries) {
+      if (attempt > 0) {
+        message("  Empty result — retrying (attempt ", attempt, "/", max_retries, ")...")
+        Sys.sleep(delay_sec * 2)
+      }
+      attempt <- attempt + 1
+
+      result <- tryCatch({
+        extracted <- call_claude(row$all_text)
+        flatten_extraction(extracted, row$article_id, row$url)
+      }, error = function(e) {
+        message("  ERROR: ", e$message)
+        tibble(
+          article_id              = row$article_id,
+          url                     = row$url,
+          accident_date           = NA_character_,
+          time_of_day             = NA_character_,
+          location_country        = NA_character_,
+          location_state_region   = NA_character_,
+          location_peak_area      = NA_character_,
+          route_name              = NA_character_,
+          route_difficulty        = NA_character_,
+          immediate_cause         = NA_character_,
+          objective_risk_factors  = NA_character_,
+          subjective_risk_factors = NA_character_,
+          social_risk_factors     = NA_character_,
+          climbing_style          = NA_character_,
+          party_members           = NA_character_,
+          extraction_error        = e$message
+        )
+      })
+
+      if (!is_empty_result(result)) break
+    }
+
+    if (is_empty_result(result)) {
+      message("  All retries exhausted — saving empty result.")
+    }
+
+    write_csv(result, output_file, append = TRUE)
+
+    Sys.sleep(delay_sec)
+  }
+
+  message("Reprocessing complete.")
+}

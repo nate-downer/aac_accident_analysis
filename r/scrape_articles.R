@@ -141,3 +141,6 @@ for (i in seq_along(urls_to_scrape)) {
 }
 
 message("Done. Output saved to: ", output_file)
+
+
+

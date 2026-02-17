@@ -1,0 +1,548 @@
+---
+title: "Test Run Comparison"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+
+## libraries ----
+
+library(tidyverse)
+library(readr)
+library(scales)
+library(ggplot2)
+library(forcats)
+library(tidyr)
+library(DT)
+
+## globals ----
+
+run_colors <- c("Run 1" = "orange", "Run 2" = "grey50")
+
+injury_levels <- c("Fatal Injury", "Serious Injury", "Minor Injury")
+
+```
+
+```{r load_data, include=FALSE}
+
+run1 <- read_csv("data/article_archive/accident_data_sample_1.csv", show_col_types = FALSE) %>%
+  mutate(run = "Run 1")
+
+run2 <- read_csv("data/article_archive/accident_data_sample_2.csv", show_col_types = FALSE) %>%
+  mutate(run = "Run 2")
+
+exclude_pattern <- "summary|in memoriam|members who passed"
+
+run1 <- run1 %>% filter(!grepl(exclude_pattern, title, ignore.case = TRUE))
+run2 <- run2 %>% filter(!grepl(exclude_pattern, title, ignore.case = TRUE))
+
+combined <- bind_rows(run1, run2)
+
+pm1 <- read_csv("data/article_archive/party_members_sample_1.csv", show_col_types = FALSE) %>%
+  filter(article_id %in% run1$article_id)
+pm2 <- read_csv("data/article_archive/party_members_sample_2.csv", show_col_types = FALSE) %>%
+  filter(article_id %in% run2$article_id)
+
+# url lookup for links
+urls <- run1 %>% select(article_id, url, title)
+
+```
+
+```{r helpers, include=FALSE}
+
+compare_risk_category <- function(col, section_title) {
+
+  factor_injuries <- combined %>%
+    filter(!is.na(.data[[col]])) %>%
+    separate_rows(col, sep = " \\| ") %>%
+    rename(factor = all_of(col)) %>%
+    group_by(run, factor) %>%
+    summarise(
+      injuries = sum(n_fatal_injury + n_serious_injury + n_minor_injury, na.rm = TRUE),
+      .groups  = "drop"
+    )
+
+  extract_factors <- function(df) {
+    df %>%
+      filter(article_id %in% shared_ids, !is.na(.data[[col]])) %>%
+      separate_rows(col, sep = " \\| ") %>%
+      select(article_id, factor = all_of(col)) %>%
+      distinct()
+  }
+
+  f1 <- extract_factors(run1)
+  f2 <- extract_factors(run2)
+
+  agreement_summary <- full_join(
+    f1 %>% mutate(in1 = TRUE),
+    f2 %>% mutate(in2 = TRUE),
+    by = c("article_id", "factor")
+  ) %>%
+    replace_na(list(in1 = FALSE, in2 = FALSE)) %>%
+    group_by(factor) %>%
+    summarise(
+      run_1_count   = sum(in1),
+      run_2_count   = sum(in2),
+      both          = sum(in1 & in2),
+      either        = sum(in1 | in2),
+      pct_agreement = round(both / either * 100, 1),
+      .groups       = "drop"
+    ) %>%
+    arrange(pct_agreement)
+
+  factor_order <- factor_injuries %>%
+    group_by(factor) %>%
+    summarise(total = sum(injuries), .groups = "drop") %>%
+    arrange(total) %>%
+    pull(factor)
+
+  plot_data <- bind_rows(
+    factor_injuries %>%
+      mutate(metric = "Injuries", value = injuries) %>%
+      select(factor, run, metric, value),
+    agreement_summary %>%
+      mutate(metric = "% Agreement", value = pct_agreement, run = "Agreement") %>%
+      select(factor, run, metric, value)
+  ) %>%
+    mutate(
+      factor = factor(factor, levels = factor_order),
+      metric = factor(metric, levels = c("Injuries", "% Agreement"))
+    )
+
+  p <- ggplot(plot_data, aes(x = value, y = factor, fill = run)) +
+    geom_col(position = "dodge") +
+    geom_text(
+      data  = plot_data %>% filter(metric == "% Agreement"),
+      aes(label = paste0(value, "%")),
+      hjust = -0.15,
+      size  = 3
+    ) +
+    scale_fill_manual(values = c(run_colors, "Agreement" = "grey55"), name = NULL) +
+    scale_x_continuous(expand = expansion(mult = c(0, 0.12))) +
+    facet_wrap(~metric, scales = "free_x", nrow = 1) +
+    labs(title = section_title, subtitle = "2020–2025", x = NULL, y = NULL) +
+    theme_minimal() +
+    theme(legend.position = "top")
+
+  list(plot = p, summary = agreement_summary)
+}
+
+```
+
+### Injuries by Year and Run
+
+Comparing total injuries at each severity level across both test runs to check for consistency. Divergence between the two lines suggests the extraction is producing different results for the same articles.
+
+```{r injuries_by_year, fig.width=10.5}
+
+combined %>%
+  filter(!is.na(publication_year)) %>%
+  group_by(run, publication_year) %>%
+  summarise(
+    `Fatal Injury`   = sum(n_fatal_injury,   na.rm = TRUE),
+    `Serious Injury` = sum(n_serious_injury, na.rm = TRUE),
+    `Minor Injury`   = sum(n_minor_injury,   na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(all_of(injury_levels), names_to = "severity", values_to = "n") %>%
+  mutate(severity = factor(severity, levels = injury_levels)) %>%
+  ggplot(aes(x = publication_year, y = n, color = run, linetype = run)) +
+  geom_line() +
+  geom_point(size = 2) +
+  scale_color_manual(values = run_colors, name = "Run") +
+  scale_linetype_manual(values = c("Run 1" = "solid", "Run 2" = "dashed"), name = "Run") +
+  facet_wrap(~severity, ncol = 1, scales = "free_y") +
+  labs(
+    title = "Injuries by Publication Year — Run Comparison",
+    subtitle = "2020–2025; closer lines indicate more consistent extraction",
+    x = "Publication Year",
+    y = "People"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+```
+
+---
+
+### Injuries by Immediate Cause
+
+```{r injuries_by_cause, fig.width=10.5, fig.height=8}
+
+## injuries per cause per run ----
+
+cause_injuries <- combined %>%
+  filter(!is.na(immediate_cause)) %>%
+  separate_rows(immediate_cause, sep = " \\| ") %>%
+  group_by(run, immediate_cause) %>%
+  summarise(
+    injuries = sum(n_fatal_injury + n_serious_injury + n_minor_injury, na.rm = TRUE),
+    .groups  = "drop"
+  )
+
+## Jaccard agreement per cause ----
+
+shared_ids <- intersect(run1$article_id, run2$article_id)
+
+extract_causes <- function(df) {
+  df %>%
+    filter(article_id %in% shared_ids, !is.na(immediate_cause)) %>%
+    separate_rows(immediate_cause, sep = " \\| ") %>%
+    select(article_id, immediate_cause) %>%
+    distinct()
+}
+
+causes1 <- extract_causes(run1)
+causes2 <- extract_causes(run2)
+
+cause_agreement_summary <- full_join(
+  causes1 %>% mutate(in1 = TRUE),
+  causes2 %>% mutate(in2 = TRUE),
+  by = c("article_id", "immediate_cause")
+) %>%
+  replace_na(list(in1 = FALSE, in2 = FALSE)) %>%
+  group_by(immediate_cause) %>%
+  summarise(
+    run_1_count   = sum(in1),
+    run_2_count   = sum(in2),
+    both          = sum(in1 & in2),
+    either        = sum(in1 | in2),
+    pct_agreement = round(both / either * 100, 1),
+    .groups       = "drop"
+  ) %>%
+  arrange(pct_agreement)
+
+## sort causes by total injuries ----
+
+cause_order <- cause_injuries %>%
+  group_by(immediate_cause) %>%
+  summarise(total = sum(injuries), .groups = "drop") %>%
+  arrange(total) %>%
+  pull(immediate_cause)
+
+## combine for faceted plot ----
+
+plot_data <- bind_rows(
+  cause_injuries %>%
+    mutate(metric = "Injuries", value = injuries) %>%
+    select(immediate_cause, run, metric, value),
+  cause_agreement_summary %>%
+    mutate(metric = "% Agreement", value = pct_agreement, run = "Agreement") %>%
+    select(immediate_cause, run, metric, value)
+) %>%
+  mutate(
+    immediate_cause = factor(immediate_cause, levels = cause_order),
+    metric          = factor(metric, levels = c("Injuries", "% Agreement"))
+  )
+
+ggplot(plot_data, aes(x = value, y = immediate_cause, fill = run)) +
+  geom_col(position = "dodge") +
+  geom_text(
+    data     = plot_data %>% filter(metric == "% Agreement"),
+    aes(label = paste0(value, "%")),
+    hjust    = -0.15,
+    size     = 3
+  ) +
+  scale_fill_manual(
+    values = c(run_colors, "Agreement" = "grey55"),
+    name   = NULL
+  ) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.12))) +
+  facet_wrap(~metric, scales = "free_x", nrow = 1) +
+  labs(
+    title = "Injuries by Immediate Cause — Run Comparison",
+    subtitle = "2020–2025",
+    x     = NULL,
+    y     = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+```
+
+```{r cause_agreement_table, echo=FALSE}
+
+datatable(
+  cause_agreement_summary,
+  colnames = c("Immediate Cause", "Run 1 Count", "Run 2 Count",
+               "Both Runs", "Either Run", "% Agreement"),
+  options  = list(pageLength = 10, order = list(list(4, "desc")), dom = "tp")
+)
+
+```
+
+---
+
+### Objective Risk Factors
+
+```{r objective_risks, fig.width=10.5, fig.height=8}
+obj <- compare_risk_category("objective_risk_factors", "Injuries by Objective Risk Factor — Run Comparison")
+print(obj$plot)
+```
+
+```{r objective_risks_table, echo=FALSE}
+datatable(obj$summary,
+  colnames = c("Objective Risk Factor", "Run 1 Count", "Run 2 Count",
+               "Both Runs", "Either Run", "% Agreement"),
+  options  = list(pageLength = 10, order = list(list(4, "desc")), dom = "tp"))
+```
+
+---
+
+### Subjective Risk Factors
+
+```{r subjective_risks, fig.width=10.5, fig.height=8}
+subj <- compare_risk_category("subjective_risk_factors", "Injuries by Subjective Risk Factor — Run Comparison")
+print(subj$plot)
+```
+
+```{r subjective_risks_table, echo=FALSE}
+datatable(subj$summary,
+  colnames = c("Subjective Risk Factor", "Run 1 Count", "Run 2 Count",
+               "Both Runs", "Either Run", "% Agreement"),
+  options  = list(pageLength = 10, order = list(list(4, "desc")), dom = "tp"))
+```
+
+---
+
+### Social Risk Factors
+
+```{r social_risks, fig.width=10.5, fig.height=8}
+soc <- compare_risk_category("social_risk_factors", "Injuries by Social Risk Factor — Run Comparison")
+print(soc$plot)
+```
+
+```{r social_risks_table, echo=FALSE}
+datatable(soc$summary,
+  colnames = c("Social Risk Factor", "Run 1 Count", "Run 2 Count",
+               "Both Runs", "Either Run", "% Agreement"),
+  options  = list(pageLength = 10, order = list(list(4, "desc")), dom = "tp"))
+```
+
+---
+
+### State Agreement
+
+```{r state_agreement, fig.width=10.5, fig.height=8}
+
+state_counts <- combined %>%
+  filter(!is.na(location_state_region)) %>%
+  count(run, location_state_region, name = "articles")
+
+top_states <- state_counts %>%
+  group_by(location_state_region) %>%
+  summarise(total = sum(articles), .groups = "drop") %>%
+  slice_max(total, n = 20) %>%
+  arrange(total) %>%
+  pull(location_state_region)
+
+state_agreement_summary <- full_join(
+  run1 %>% filter(article_id %in% shared_ids, !is.na(location_state_region)) %>%
+    select(article_id, factor = location_state_region) %>% distinct() %>% mutate(in1 = TRUE),
+  run2 %>% filter(article_id %in% shared_ids, !is.na(location_state_region)) %>%
+    select(article_id, factor = location_state_region) %>% distinct() %>% mutate(in2 = TRUE),
+  by = c("article_id", "factor")
+) %>%
+  replace_na(list(in1 = FALSE, in2 = FALSE)) %>%
+  group_by(factor) %>%
+  summarise(
+    run_1_count   = sum(in1),
+    run_2_count   = sum(in2),
+    both          = sum(in1 & in2),
+    either        = sum(in1 | in2),
+    pct_agreement = round(both / either * 100, 1),
+    .groups       = "drop"
+  )
+
+plot_data_state <- bind_rows(
+  state_counts %>%
+    filter(location_state_region %in% top_states) %>%
+    mutate(metric = "Articles", value = articles, factor = location_state_region) %>%
+    select(factor, run, metric, value),
+  state_agreement_summary %>%
+    filter(factor %in% top_states) %>%
+    mutate(metric = "% Agreement", value = pct_agreement, run = "Agreement") %>%
+    select(factor, run, metric, value)
+) %>%
+  mutate(
+    factor = factor(factor, levels = top_states),
+    metric = factor(metric, levels = c("Articles", "% Agreement"))
+  )
+
+ggplot(plot_data_state, aes(x = value, y = factor, fill = run)) +
+  geom_col(position = "dodge") +
+  geom_text(
+    data  = plot_data_state %>% filter(metric == "% Agreement"),
+    aes(label = paste0(value, "%")),
+    hjust = -0.15, size = 3
+  ) +
+  scale_fill_manual(values = c(run_colors, "Agreement" = "grey55"), name = NULL) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.12))) +
+  facet_wrap(~metric, scales = "free_x", nrow = 1) +
+  labs(
+    title    = "Accident Location by State — Run Comparison",
+    subtitle = "2020–2025; top 20 states by combined article count",
+    x        = NULL,
+    y        = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+```
+
+```{r state_agreement_table, echo=FALSE}
+datatable(
+  state_agreement_summary %>% arrange(desc(either)),
+  colnames = c("State / Region", "Run 1 Count", "Run 2 Count",
+               "Both Runs", "Either Run", "% Agreement"),
+  options  = list(pageLength = 10, order = list(list(4, "desc")), dom = "tp")
+)
+```
+
+---
+
+### Injuries by YDS Grade
+
+```{r grade_comparison, fig.width=10.5, fig.height=6}
+
+grade_injuries <- combined %>%
+  filter(!is.na(yds_grade)) %>%
+  group_by(run, yds_grade, yds_grade_index) %>%
+  summarise(
+    injuries = sum(n_fatal_injury + n_serious_injury + n_minor_injury, na.rm = TRUE),
+    .groups  = "drop"
+  )
+
+grade_agreement_summary <- full_join(
+  run1 %>% filter(article_id %in% shared_ids, !is.na(yds_grade)) %>%
+    select(article_id, factor = yds_grade) %>% distinct() %>% mutate(in1 = TRUE),
+  run2 %>% filter(article_id %in% shared_ids, !is.na(yds_grade)) %>%
+    select(article_id, factor = yds_grade) %>% distinct() %>% mutate(in2 = TRUE),
+  by = c("article_id", "factor")
+) %>%
+  replace_na(list(in1 = FALSE, in2 = FALSE)) %>%
+  group_by(factor) %>%
+  summarise(
+    run_1_count   = sum(in1),
+    run_2_count   = sum(in2),
+    both          = sum(in1 & in2),
+    either        = sum(in1 | in2),
+    pct_agreement = round(both / either * 100, 1),
+    .groups       = "drop"
+  )
+
+grade_index <- grade_injuries %>%
+  distinct(yds_grade, yds_grade_index) %>%
+  arrange(yds_grade_index)
+
+plot_data_grade <- bind_rows(
+  grade_injuries %>%
+    mutate(metric = "Injuries", value = injuries, factor = yds_grade) %>%
+    select(factor, yds_grade_index, run, metric, value),
+  grade_agreement_summary %>%
+    left_join(grade_index, by = c("factor" = "yds_grade")) %>%
+    mutate(metric = "% Agreement", value = pct_agreement, run = "Agreement") %>%
+    select(factor, yds_grade_index, run, metric, value)
+) %>%
+  mutate(
+    factor = fct_reorder(as.character(factor), yds_grade_index),
+    metric = factor(metric, levels = c("Injuries", "% Agreement"))
+  )
+
+ggplot(plot_data_grade, aes(x = factor, y = value, fill = run)) +
+  geom_col(position = "dodge") +
+  geom_text(
+    data     = plot_data_grade %>% filter(metric == "% Agreement"),
+    aes(label = paste0(value, "%")),
+    vjust    = -0.4, size = 3
+  ) +
+  scale_fill_manual(values = c(run_colors, "Agreement" = "grey55"), name = NULL) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  facet_wrap(~metric, scales = "free_y", ncol = 1) +
+  labs(
+    title    = "Injuries by YDS Grade — Run Comparison",
+    subtitle = "2020–2025",
+    x        = "YDS Grade",
+    y        = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+```
+
+---
+
+### Agreement by Data Type
+
+Distribution of Jaccard % agreement scores across all values within each data category. Each point is one factor, state, or grade. The vertical line shows the median for that category.
+
+```{r agreement_summary, fig.width=9, fig.height=6}
+
+bind_rows(
+  cause_agreement_summary  %>% mutate(risk_type = "Immediate Cause"),
+  obj$summary              %>% mutate(risk_type = "Objective Risks"),
+  subj$summary             %>% mutate(risk_type = "Subjective Risks"),
+  soc$summary              %>% mutate(risk_type = "Social Risks"),
+  state_agreement_summary  %>% mutate(risk_type = "State / Region"),
+  grade_agreement_summary  %>% mutate(risk_type = "YDS Grade", factor = as.character(factor))
+) %>%
+  mutate(risk_type = fct_reorder(risk_type, pct_agreement, .fun = median)) %>%
+  ggplot(aes(x = pct_agreement, y = risk_type)) +
+  geom_jitter(height = 0.15, color = "orange", size = 2.5, alpha = 0.8) +
+  stat_summary(fun = median, geom = "crossbar", width = 0.5,
+               color = "grey30") +
+  scale_x_continuous(limits = c(0, 100), labels = function(x) paste0(x, "%")) +
+  labs(
+    title    = "% Agreement by Data Type",
+    subtitle = "Each point = one value; line = median. Higher is more consistent.",
+    x        = "Jaccard % Agreement",
+    y        = NULL
+  ) +
+  theme_minimal()
+
+```
+
+---
+
+### Fatal Injury Discrepancies
+
+Climbers tagged as a fatal injury in one run but not the other. Each row represents a case where the two runs disagreed on whether someone died.
+
+```{r fatal_discrepancies, echo=FALSE}
+
+fatal1 <- pm1 %>%
+  filter(injury_level == "fatal injury") %>%
+  select(article_id, name)
+
+fatal2 <- pm2 %>%
+  filter(injury_level == "fatal injury") %>%
+  select(article_id, name)
+
+discrepancies <- bind_rows(
+  anti_join(fatal1, fatal2, by = c("article_id", "name")) %>% mutate(present_in = "Run 1 only"),
+  anti_join(fatal2, fatal1, by = c("article_id", "name")) %>% mutate(present_in = "Run 2 only")
+) %>%
+  left_join(urls, by = "article_id") %>%
+  mutate(article = paste0('<a href="', url, '" target="_blank">', title, '</a>')) %>%
+  select(present_in, name, article) %>%
+  arrange(present_in, name)
+
+datatable(
+  discrepancies,
+  escape    = FALSE,
+  colnames  = c("Present In", "Climber Name", "Article"),
+  options   = list(pageLength = 20, scrollX = TRUE)
+)
+
+```
+
+---
+
+Analysis by Nate Downer
+
+Data from https://publications.americanalpineclub.org/

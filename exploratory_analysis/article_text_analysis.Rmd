@@ -92,7 +92,8 @@ articles_tagged %>%
     labs(
         title = "Reports by Climb and Publication Year",
         subtitle = "Metadata fro climb year is inconsistent before 2012"
-    )
+    ) +
+    theme_minimal()
 
 ```
 
@@ -116,6 +117,7 @@ articles_tagged %>%
     facet_wrap(~article_type, nrow = 1) +
     scale_fill_manual(values = report_colors) +
     labs(title = "Accident Reports by Publication Decade") +
+    theme_minimal() +
     theme(legend.position = 'none')
 
 ```

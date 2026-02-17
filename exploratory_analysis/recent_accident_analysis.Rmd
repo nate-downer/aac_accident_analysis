@@ -1,5 +1,5 @@
 ---
-title: "2024–2024–2025 AAC Accident Reports - Exploratory Analysis"
+title: "AAC Accident Reports (2020 - 2025) - Exploratory Analysis"
 date: "`r Sys.Date()`"
 output: html_document
 ---
@@ -65,10 +65,11 @@ accident_data %>%
   scale_x_continuous(expand = expansion(mult = c(0, 0.1))) +
   labs(
     title = "Accident Reports by State / Region",
-    subtitle = "Top 20 states, 2024–2025",
+    subtitle = "Top 20 states, 2020–2025",
     x = "Reports",
     y = NULL
-  )
+  ) +
+  theme_minimal()
 
 ```
 
@@ -100,10 +101,11 @@ accident_data %>%
   scale_x_continuous(expand = expansion(mult = c(0, 0.05))) +
   labs(
     title = "Injuries by State / Region",
-    subtitle = "Top 20 states by total injuries, 2024–2025",
+    subtitle = "Top 20 states by total injuries, 2020–2025",
     x = "People",
     y = NULL
-  )
+  ) +
+  theme_minimal()
 
 ```
 
@@ -124,10 +126,11 @@ accident_data %>%
   scale_x_continuous(expand = expansion(mult = c(0, 0.1))) +
   labs(
     title = "Accident Reports by Immediate Cause",
-    subtitle = "2024–2025 - Reports with multiple causes counted once per cause",
+    subtitle = "2020–2025 - Reports with multiple causes counted once per cause",
     x = "Reports",
     y = NULL
-  )
+  ) +
+  theme_minimal()
 
 ```
 
@@ -153,10 +156,11 @@ accident_data %>%
   scale_x_continuous(expand = expansion(mult = c(0, 0.05))) +
   labs(
     title = "Injuries by Immediate Cause",
-    subtitle = "2024–2025 - Accidents with multiple causes counted once per cause",
+    subtitle = "2020–2025 - Accidents with multiple causes counted once per cause",
     x = "People",
     y = NULL
-  )
+  ) +
+  theme_minimal()
 
 ```
 
@@ -174,10 +178,11 @@ accident_data %>%
   scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
   labs(
     title = "Distribution of Party Size",
-    subtitle = "2024–2025 - Excludes solo climbers and reports with no party size data",
+    subtitle = "2020–2025 - Excludes solo climbers and reports with no party size data",
     x = "Party Size",
     y = "Reports"
-  )
+  ) +
+  theme_minimal()
 
 ```
 
@@ -207,10 +212,11 @@ accident_data %>%
   scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
   labs(
     title = "Injuries by YDS Grade",
-    subtitle = "2024–2025 - Grades simplified to nearst full grade (e.g. 5.10a = 5.10)",
+    subtitle = "2020–2025 - Grades simplified to nearst full grade (e.g. 5.10a = 5.10)",
     x = "YDS Grade",
     y = "Injuries"
-  )
+  ) +
+  theme_minimal()
 
 ```
 
