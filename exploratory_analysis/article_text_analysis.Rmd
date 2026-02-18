@@ -66,6 +66,30 @@ articles_tagged %>%
 
 ```{r visualize distribution over time, fig.width=10.5}
 
+# articles_tagged %>%
+#     filter(article_type != "Other - No Accident") %>%
+#     group_by(publication_year, article_type) %>%
+#     summarise(articles = n()) %>%
+#     ungroup() %>%
+#     mutate(
+#         date = publication_year,
+#         date_type = "Publication Year"
+#     ) %>%
+#     ggplot(aes(x = date, y = articles, fill = article_type)) +
+#     geom_vline(xintercept = 2012, color = "grey60", linetype = "dashed") +
+#     geom_col() +
+#     facet_wrap(~date_type, nrow = 1) +
+#     scale_fill_manual(values = report_colors, name = "Article Type") +
+#     labs(
+#         title = "Reports by Climb and Publication Year",
+#         subtitle = "Metadata is inconsistent after 2012",
+#         y = "AAC Articles",
+#         x = "Publication Year"
+#     ) +
+#     theme_minimal() +
+#     theme(legend.position = "bottom")
+
+
 articles_tagged %>%
     group_by(publication_year, article_type) %>%
     summarise(articles = n()) %>%
@@ -91,7 +115,7 @@ articles_tagged %>%
     scale_fill_manual(values = report_colors, name = "Article Type") +
     labs(
         title = "Reports by Climb and Publication Year",
-        subtitle = "Metadata fro climb year is inconsistent before 2012"
+        subtitle = "Metadata for climb year is inconsistent before 2012"
     ) +
     theme_minimal()
 
