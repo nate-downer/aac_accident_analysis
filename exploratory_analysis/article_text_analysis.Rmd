@@ -14,9 +14,8 @@ library(tidyverse)
 library(readr)       
 library(stringr)    
 library(lubridate)  
-library(scales)
-library(ggplot2)
-library(DT)         # interactive tables
+library(plotly)
+library(DT)
 
 ## inputs ----
 
@@ -36,11 +35,25 @@ report_colors <- c(
 ```
 
 
-### Visualization of Sample Data
+This notebook documents the exploratory analysis and prompt development used to extract structured data from AAC accident report text. It covers three areas:
 
-Start by visualizing how many articles we are workign with and see what kind of usable metadata we have.
+1. **Data distribution** — understanding the volume and composition of articles available in the AAC dataset, including how many are tagged as accident reports and how they are distributed over time.
+2. **Prompt development** — iterative design of the Claude API prompt used to extract structured fields (location, route, risk factors, climbing style, party members) from unstructured article text.
+3. **Output review** — sample outputs from the extraction pipeline, with notes on accuracy and areas for improvement.
 
-```{r sample_table}
+The extraction prompt and pipeline used in production are in `r/extract_report_data.R`. See `exploratory_analysis/recent_accident_analysis.html` for analysis of the full extracted dataset.
+
+---
+
+## Visualization of Sample Data
+
+Start by visualizing how many articles we are working with and what kind of usable metadata we have.
+
+---
+
+### Sample of Article Text
+
+```{r sample_table, echo=FALSE}
 
 articles_raw <- read_csv(accidents_file, show_col_types = FALSE)
 
@@ -64,49 +77,21 @@ articles_tagged %>%
 
 ```
 
-```{r visualize distribution over time, fig.width=10.5}
+---
 
-# articles_tagged %>%
-#     filter(article_type != "Other - No Accident") %>%
-#     group_by(publication_year, article_type) %>%
-#     summarise(articles = n()) %>%
-#     ungroup() %>%
-#     mutate(
-#         date = publication_year,
-#         date_type = "Publication Year"
-#     ) %>%
-#     ggplot(aes(x = date, y = articles, fill = article_type)) +
-#     geom_vline(xintercept = 2012, color = "grey60", linetype = "dashed") +
-#     geom_col() +
-#     facet_wrap(~date_type, nrow = 1) +
-#     scale_fill_manual(values = report_colors, name = "Article Type") +
-#     labs(
-#         title = "Reports by Climb and Publication Year",
-#         subtitle = "Metadata is inconsistent after 2012",
-#         y = "AAC Articles",
-#         x = "Publication Year"
-#     ) +
-#     theme_minimal() +
-#     theme(legend.position = "bottom")
+### Visualize Article Distributions
 
+```{r visualize distribution over time, fig.width=10.5, echo=FALSE}
 
-articles_tagged %>%
+p <- articles_tagged %>%
     group_by(publication_year, article_type) %>%
-    summarise(articles = n()) %>%
-    ungroup() %>%
-    mutate(
-        date = publication_year,
-        date_type = "Publication Year"
-    ) %>%
+    summarise(articles = n(), .groups = "drop") %>%
+    mutate(date = publication_year, date_type = "Publication Year") %>%
     bind_rows(
         articles_tagged %>%
             group_by(climb_year, article_type) %>%
-            summarise(articles = n()) %>%
-            ungroup() %>%
-            mutate(
-                date = climb_year,
-                date_type = "Climb Year"
-            )
+            summarise(articles = n(), .groups = "drop") %>%
+            mutate(date = climb_year, date_type = "Climb Year")
     ) %>%
     ggplot(aes(x = date, y = articles, fill = article_type)) +
     geom_vline(xintercept = 2012, color = "grey60") +
@@ -115,15 +100,19 @@ articles_tagged %>%
     scale_fill_manual(values = report_colors, name = "Article Type") +
     labs(
         title = "Reports by Climb and Publication Year",
-        subtitle = "Metadata for climb year is inconsistent before 2012"
+        subtitle = "Metadata for climb year is inconsistent before 2012",
+        x = "Year",
+        y = "Articles"
     ) +
     theme_minimal()
 
+ggplotly(p) %>% config(displayModeBar = FALSE)
+
 ```
 
-```{r summary numbers, fig.width=10.5}
+```{r summary numbers, fig.width=10.5, echo=FALSE}
 
-articles_tagged %>%
+p <- articles_tagged %>%
     filter(article_type %in% c("Accident Report", "Other - Accident Mention")) %>%
     mutate(
         publication_decade = if_else(
@@ -133,16 +122,20 @@ articles_tagged %>%
         )
     ) %>%
     group_by(publication_decade, article_type) %>%
-    summarise(articles = n()) %>%
-    ungroup() %>%
-    ggplot(aes(y = publication_decade, x = articles, label = articles, fill = article_type)) +
+    summarise(articles = n(), .groups = "drop") %>%
+    ggplot(aes(y = publication_decade, x = articles, fill = article_type)) +
     geom_col() +
-    geom_text(aes(x = 0), hjust = 0) +
     facet_wrap(~article_type, nrow = 1) +
     scale_fill_manual(values = report_colors) +
-    labs(title = "Accident Reports by Publication Decade") +
+    labs(
+        title = "Accident Reports by Publication Decade",
+        x = "Articles",
+        y = "Publication Decade"
+    ) +
     theme_minimal() +
-    theme(legend.position = 'none')
+    theme(legend.position = "none")
+
+ggplotly(p) %>% config(displayModeBar = FALSE)
 
 ```
 
