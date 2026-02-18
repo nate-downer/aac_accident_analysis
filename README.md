@@ -19,7 +19,11 @@ This project is inspired by work by Eliot Caroom. His [Natural Langauge Analysis
 
 ## Exploratory Analysis
 
+Exploratory analysis for this project was done in R-markdown files. The rendered interactive HTML outputs from these files are hosted [here](https://nate-downer.github.io/aac_accident_analysis/).
 
+- [Article Text & Prompt Development](https://nate-downer.github.io/aac_accident_analysis/exploratory_analysis/article_text_analysis.html)
+- [Accident Patterns (2020–2025)](https://nate-downer.github.io/aac_accident_analysis/exploratory_analysis/recent_accident_analysis.html)
+- [Extraction Run Comparison](https://nate-downer.github.io/aac_accident_analysis/exploratory_analysis/compare_test_runs.html)
 
 ## Pipeline
 
