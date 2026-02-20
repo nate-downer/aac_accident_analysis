@@ -81,6 +81,8 @@ articles_tagged %>%
 
 ### Visualize Article Distributions
 
+*Metadata for climb year is inconsistent before 2012*
+
 ```{r visualize distribution over time, fig.width=10.5, echo=FALSE}
 
 p <- articles_tagged %>%
@@ -106,7 +108,9 @@ p <- articles_tagged %>%
     ) +
     theme_minimal()
 
-ggplotly(p) %>% config(displayModeBar = FALSE)
+ggplotly(p) %>%
+  config(displayModeBar = FALSE, scrollZoom = FALSE) %>%
+  layout(dragmode = FALSE)
 
 ```
 
@@ -135,7 +139,9 @@ p <- articles_tagged %>%
     theme_minimal() +
     theme(legend.position = "none")
 
-ggplotly(p) %>% config(displayModeBar = FALSE)
+ggplotly(p) %>%
+  config(displayModeBar = FALSE, scrollZoom = FALSE) %>%
+  layout(dragmode = FALSE)
 
 ```
 

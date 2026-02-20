@@ -21,6 +21,7 @@ library(scales)
 library(ggplot2)
 library(forcats)
 library(tidyr)
+library(plotly)
 library(DT)
 
 ## globals ----
@@ -44,6 +45,8 @@ party_members <- read_csv("data/party_members.csv",  show_col_types = FALSE)
 
 ### Reports and Injuries by State
 
+*Top 20 states, 2020–2025*
+
 Note that all data is extracted from publicly avalible accident reports from the [AAC](https://publications.americanalpineclub.org/), and the data is assumed to be incomplete:
 
 - Not all accidents are recorded, or shared with the AAC
@@ -54,15 +57,15 @@ For more information on how the accident risk factors are extraced, see the Arti
 
 ```{r reports_by_state, fig.width=10.5}
 
-accident_data %>%
+p <- accident_data %>%
   filter(!is.na(location_state_region)) %>%
   count(location_state_region, sort = TRUE) %>%
   slice_head(n = 20) %>%
   mutate(location_state_region = fct_reorder(location_state_region, n)) %>%
   ggplot(aes(x = n, y = location_state_region)) +
   geom_col(fill = "orange") +
-  geom_text(aes(label = n), hjust = -0.2, size = 3.5) +
-  scale_x_continuous(expand = expansion(mult = c(0, 0.1))) +
+  # geom_text(aes(label = n), hjust = 0, nudge_x = 1, size = 3.5) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.15))) +
   labs(
     title = "Accident Reports by State / Region",
     subtitle = "Top 20 states, 2020–2025",
@@ -71,11 +74,17 @@ accident_data %>%
   ) +
   theme_minimal()
 
+ggplotly(p) %>%
+  config(displayModeBar = FALSE, scrollZoom = FALSE) %>%
+  layout(dragmode = FALSE)
+
 ```
+
+
 
 ```{r injuries_by_state, fig.width=10.5}
 
-accident_data %>%
+p <- accident_data %>%
   filter(!is.na(location_state_region)) %>%
   group_by(location_state_region) %>%
   summarise(
@@ -107,23 +116,31 @@ accident_data %>%
   ) +
   theme_minimal()
 
+ggplotly(p) %>%
+  config(displayModeBar = FALSE, scrollZoom = FALSE) %>%
+  layout(dragmode = FALSE)
+
 ```
+
+*Top 20 states by total injuries, 2020–2025*
 
 ---
 
 ### Reports and Injuries by Immediate Cause
 
+*2020–2025 - Reports with multiple causes counted once per cause*
+
 ```{r reports_by_cause, fig.width=10.5}
 
-accident_data %>%
+p <- accident_data %>%
   filter(!is.na(immediate_cause)) %>%
   separate_rows(immediate_cause, sep = " \\| ") %>%
   count(immediate_cause, sort = TRUE) %>%
   mutate(immediate_cause = fct_reorder(immediate_cause, n)) %>%
   ggplot(aes(x = n, y = immediate_cause)) +
   geom_col(fill = "orange") +
-  geom_text(aes(label = n), hjust = -0.2, size = 3.5) +
-  scale_x_continuous(expand = expansion(mult = c(0, 0.1))) +
+  # geom_text(aes(label = n), hjust = 0, nudge_x = 0.5, size = 3.5) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.15))) +
   labs(
     title = "Accident Reports by Immediate Cause",
     subtitle = "2020–2025 - Reports with multiple causes counted once per cause",
@@ -132,11 +149,17 @@ accident_data %>%
   ) +
   theme_minimal()
 
+ggplotly(p) %>%
+  config(displayModeBar = FALSE, scrollZoom = FALSE) %>%
+  layout(dragmode = FALSE)
+
 ```
+
+*2020–2025 - Accidents with multiple causes counted once per cause*
 
 ```{r injuries_by_cause, fig.width=10.5}
 
-accident_data %>%
+p <- accident_data %>%
   filter(!is.na(immediate_cause)) %>%
   separate_rows(immediate_cause, sep = " \\| ") %>%
   group_by(immediate_cause) %>%
@@ -162,15 +185,21 @@ accident_data %>%
   ) +
   theme_minimal()
 
+ggplotly(p) %>%
+  config(displayModeBar = FALSE, scrollZoom = FALSE) %>%
+  layout(dragmode = FALSE)
+
 ```
 
 ---
 
 ### Party Size Distribution
 
+*2020–2025 - Excludes solo climbers and reports with no party size data*
+
 ```{r party_size, fig.width=10.5}
 
-accident_data %>%
+p <- accident_data %>%
   filter(!is.na(party_size), party_size > 1) %>%
   ggplot(aes(x = party_size)) +
   geom_histogram(binwidth = 1, fill = "orange") +
@@ -184,15 +213,21 @@ accident_data %>%
   ) +
   theme_minimal()
 
+ggplotly(p) %>%
+  config(displayModeBar = FALSE, scrollZoom = FALSE) %>%
+  layout(dragmode = FALSE)
+
 ```
 
 ---
 
 ### Injuries by YDS Grade
 
+*2020–2025 - Grades simplified to nearest full grade (e.g. 5.10a = 5.10)*
+
 ```{r injuries_by_grade, fig.width=10.5}
 
-accident_data %>%
+p <- accident_data %>%
   filter(!is.na(yds_grade)) %>%
   group_by(yds_grade, yds_grade_index) %>%
   summarise(
@@ -217,6 +252,62 @@ accident_data %>%
     y = "Injuries"
   ) +
   theme_minimal()
+
+ggplotly(p) %>%
+  config(displayModeBar = FALSE, scrollZoom = FALSE) %>%
+  layout(dragmode = FALSE)
+
+```
+
+---
+
+### No Helmet by State / Region
+
+*States with 5+ accidents, 2020–2025*
+
+```{r no_helmet_by_state, fig.width=10.5}
+
+p <- accident_data %>%
+  filter(!is.na(location_state_region)) %>%
+  group_by(location_state_region) %>%
+  summarise(
+    total_accidents = n(),
+    no_helmet_accidents = sum(str_detect(subjective_risk_factors, "No Helmet"), na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  filter(total_accidents >= 5) %>%  # Only show states with at least 5 accidents
+  mutate(
+    pct_no_helmet = (no_helmet_accidents / total_accidents) * 100,
+    location_state_region = fct_reorder(location_state_region, pct_no_helmet)
+  ) %>%
+  pivot_longer(
+    cols = c(pct_no_helmet, total_accidents),
+    names_to = "metric",
+    values_to = "value"
+  ) %>%
+  mutate(
+    metric = factor(
+      metric,
+      levels = c("pct_no_helmet", "total_accidents"),
+      labels = c("% with No Helmet", "Total Accidents")
+    )
+  ) %>%
+  ggplot(aes(x = value, y = location_state_region)) +
+  geom_col(fill = "orange") +
+  facet_wrap(~ metric, scales = "free_x") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05))) +
+  labs(
+    title = "No Helmet Risk Factor by State / Region",
+    subtitle = "States with 5+ accidents, 2020–2025",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal() +
+  theme(strip.text = element_text(face = "bold", size = 11))
+
+ggplotly(p) %>%
+  config(displayModeBar = FALSE, scrollZoom = FALSE) %>%
+  layout(dragmode = FALSE)
 
 ```
 

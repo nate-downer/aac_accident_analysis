@@ -18,6 +18,7 @@ library(scales)
 library(ggplot2)
 library(forcats)
 library(tidyr)
+library(plotly)
 library(DT)
 
 ## globals ----
@@ -116,18 +117,19 @@ compare_risk_category <- function(col, section_title) {
 
   p <- ggplot(plot_data, aes(x = value, y = factor, fill = run)) +
     geom_col(position = "dodge") +
-    geom_text(
-      data  = plot_data %>% filter(metric == "% Agreement"),
-      aes(label = paste0(value, "%")),
-      hjust = -0.15,
-      size  = 3
-    ) +
+    # geom_text(
+    #   data  = plot_data %>% filter(metric == "% Agreement"),
+    #   aes(label = paste0(value, "%")),
+    #   hjust = 0,
+    #   nudge_x = 2,
+    #   size  = 3
+    # ) +
     scale_fill_manual(values = c(run_colors, "Agreement" = "grey55"), name = NULL) +
     scale_x_continuous(expand = expansion(mult = c(0, 0.12))) +
     facet_wrap(~metric, scales = "free_x", nrow = 1) +
     labs(title = section_title, subtitle = "2020–2025", x = NULL, y = NULL) +
     theme_minimal() +
-    theme(legend.position = "top")
+    theme(legend.position = "bottom")
 
   list(plot = p, summary = agreement_summary)
 }
@@ -136,11 +138,13 @@ compare_risk_category <- function(col, section_title) {
 
 ### Injuries by Year and Run
 
+*2020–2025; closer lines indicate more consistent extraction*
+
 Comparing total injuries at each severity level across both test runs to check for consistency. Divergence between the two lines suggests the extraction is producing different results for the same articles.
 
 ```{r injuries_by_year, fig.width=10.5}
 
-combined %>%
+p <- combined %>%
   filter(!is.na(publication_year)) %>%
   group_by(run, publication_year) %>%
   summarise(
@@ -164,13 +168,19 @@ combined %>%
     y = "People"
   ) +
   theme_minimal() +
-  theme(legend.position = "top")
+  theme(legend.position = "bottom")
+
+ggplotly(p) %>%
+  config(displayModeBar = FALSE, scrollZoom = FALSE) %>%
+  layout(dragmode = FALSE)
 
 ```
 
 ---
 
 ### Injuries by Immediate Cause
+
+*2020–2025*
 
 ```{r injuries_by_cause, fig.width=10.5, fig.height=8}
 
@@ -240,14 +250,15 @@ plot_data <- bind_rows(
     metric          = factor(metric, levels = c("Injuries", "% Agreement"))
   )
 
-ggplot(plot_data, aes(x = value, y = immediate_cause, fill = run)) +
+p <- ggplot(plot_data, aes(x = value, y = immediate_cause, fill = run)) +
   geom_col(position = "dodge") +
-  geom_text(
-    data     = plot_data %>% filter(metric == "% Agreement"),
-    aes(label = paste0(value, "%")),
-    hjust    = -0.15,
-    size     = 3
-  ) +
+  # geom_text(
+  #   data     = plot_data %>% filter(metric == "% Agreement"),
+  #   aes(label = paste0(value, "%")),
+  #   hjust    = 0,
+  #   nudge_x  = 2,
+  #   size     = 3
+  # ) +
   scale_fill_manual(
     values = c(run_colors, "Agreement" = "grey55"),
     name   = NULL
@@ -261,7 +272,11 @@ ggplot(plot_data, aes(x = value, y = immediate_cause, fill = run)) +
     y     = NULL
   ) +
   theme_minimal() +
-  theme(legend.position = "top")
+  theme(legend.position = "bottom")
+
+ggplotly(p) %>%
+  config(displayModeBar = FALSE, scrollZoom = FALSE) %>%
+  layout(dragmode = FALSE)
 
 ```
 
@@ -280,9 +295,13 @@ datatable(
 
 ### Objective Risk Factors
 
+*2020–2025*
+
 ```{r objective_risks, fig.width=10.5, fig.height=8}
 obj <- compare_risk_category("objective_risk_factors", "Injuries by Objective Risk Factor — Run Comparison")
-print(obj$plot)
+ggplotly(obj$plot) %>%
+  config(displayModeBar = FALSE, scrollZoom = FALSE) %>%
+  layout(dragmode = FALSE)
 ```
 
 ```{r objective_risks_table, echo=FALSE}
@@ -296,9 +315,13 @@ datatable(obj$summary,
 
 ### Subjective Risk Factors
 
+*2020–2025*
+
 ```{r subjective_risks, fig.width=10.5, fig.height=8}
 subj <- compare_risk_category("subjective_risk_factors", "Injuries by Subjective Risk Factor — Run Comparison")
-print(subj$plot)
+ggplotly(subj$plot) %>%
+  config(displayModeBar = FALSE, scrollZoom = FALSE) %>%
+  layout(dragmode = FALSE)
 ```
 
 ```{r subjective_risks_table, echo=FALSE}
@@ -312,9 +335,13 @@ datatable(subj$summary,
 
 ### Social Risk Factors
 
+*2020–2025*
+
 ```{r social_risks, fig.width=10.5, fig.height=8}
 soc <- compare_risk_category("social_risk_factors", "Injuries by Social Risk Factor — Run Comparison")
-print(soc$plot)
+ggplotly(soc$plot) %>%
+  config(displayModeBar = FALSE, scrollZoom = FALSE) %>%
+  layout(dragmode = FALSE)
 ```
 
 ```{r social_risks_table, echo=FALSE}
@@ -327,6 +354,8 @@ datatable(soc$summary,
 ---
 
 ### State Agreement
+
+*2020–2025; top 20 states by combined article count*
 
 ```{r state_agreement, fig.width=10.5, fig.height=8}
 
@@ -374,13 +403,15 @@ plot_data_state <- bind_rows(
     metric = factor(metric, levels = c("Articles", "% Agreement"))
   )
 
-ggplot(plot_data_state, aes(x = value, y = factor, fill = run)) +
+p <- ggplot(plot_data_state, aes(x = value, y = factor, fill = run)) +
   geom_col(position = "dodge") +
-  geom_text(
-    data  = plot_data_state %>% filter(metric == "% Agreement"),
-    aes(label = paste0(value, "%")),
-    hjust = -0.15, size = 3
-  ) +
+  # geom_text(
+  #   data  = plot_data_state %>% filter(metric == "% Agreement"),
+  #   aes(label = paste0(value, "%")),
+  #   hjust = 0,
+  #   nudge_x = 2,
+  #   size = 3
+  # ) +
   scale_fill_manual(values = c(run_colors, "Agreement" = "grey55"), name = NULL) +
   scale_x_continuous(expand = expansion(mult = c(0, 0.12))) +
   facet_wrap(~metric, scales = "free_x", nrow = 1) +
@@ -391,7 +422,11 @@ ggplot(plot_data_state, aes(x = value, y = factor, fill = run)) +
     y        = NULL
   ) +
   theme_minimal() +
-  theme(legend.position = "top")
+  theme(legend.position = "bottom")
+
+ggplotly(p) %>%
+  config(displayModeBar = FALSE, scrollZoom = FALSE) %>%
+  layout(dragmode = FALSE)
 
 ```
 
@@ -407,6 +442,8 @@ datatable(
 ---
 
 ### Injuries by YDS Grade
+
+*2020–2025*
 
 ```{r grade_comparison, fig.width=10.5, fig.height=6}
 
@@ -454,13 +491,15 @@ plot_data_grade <- bind_rows(
     metric = factor(metric, levels = c("Injuries", "% Agreement"))
   )
 
-ggplot(plot_data_grade, aes(x = factor, y = value, fill = run)) +
+p <- ggplot(plot_data_grade, aes(x = factor, y = value, fill = run)) +
   geom_col(position = "dodge") +
-  geom_text(
-    data     = plot_data_grade %>% filter(metric == "% Agreement"),
-    aes(label = paste0(value, "%")),
-    vjust    = -0.4, size = 3
-  ) +
+  # geom_text(
+  #   data     = plot_data_grade %>% filter(metric == "% Agreement"),
+  #   aes(label = paste0(value, "%")),
+  #   vjust    = 0,
+  #   nudge_y  = 2,
+  #   size     = 3
+  # ) +
   scale_fill_manual(values = c(run_colors, "Agreement" = "grey55"), name = NULL) +
   scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
   facet_wrap(~metric, scales = "free_y", ncol = 1) +
@@ -471,7 +510,11 @@ ggplot(plot_data_grade, aes(x = factor, y = value, fill = run)) +
     y        = NULL
   ) +
   theme_minimal() +
-  theme(legend.position = "top")
+  theme(legend.position = "bottom")
+
+ggplotly(p) %>%
+  config(displayModeBar = FALSE, scrollZoom = FALSE) %>%
+  layout(dragmode = FALSE)
 
 ```
 
@@ -479,23 +522,50 @@ ggplot(plot_data_grade, aes(x = factor, y = value, fill = run)) +
 
 ### Agreement by Data Type
 
+*Each point = one value; line = median. Higher is more consistent.*
+
 Distribution of Jaccard % agreement scores across all values within each data category. Each point is one factor, state, or grade. The vertical line shows the median for that category.
 
 ```{r agreement_summary, fig.width=9, fig.height=6}
 
-bind_rows(
-  cause_agreement_summary  %>% mutate(risk_type = "Immediate Cause"),
-  obj$summary              %>% mutate(risk_type = "Objective Risks"),
-  subj$summary             %>% mutate(risk_type = "Subjective Risks"),
-  soc$summary              %>% mutate(risk_type = "Social Risks"),
-  state_agreement_summary  %>% mutate(risk_type = "State / Region"),
-  grade_agreement_summary  %>% mutate(risk_type = "YDS Grade", factor = as.character(factor))
+agreement_data <- bind_rows(
+  cause_agreement_summary %>% 
+    mutate(item = immediate_cause, risk_type = "Immediate Cause") %>% 
+    select(item, pct_agreement, risk_type),
+  obj$summary %>% 
+    rename(item = factor) %>% 
+    mutate(risk_type = "Objective Risks") %>% 
+    select(item, pct_agreement, risk_type),
+  subj$summary %>% 
+    rename(item = factor) %>% 
+    mutate(risk_type = "Subjective Risks") %>% 
+    select(item, pct_agreement, risk_type),
+  soc$summary %>% 
+    rename(item = factor) %>% 
+    mutate(risk_type = "Social Risks") %>% 
+    select(item, pct_agreement, risk_type),
+  state_agreement_summary %>% 
+    rename(item = factor) %>% 
+    mutate(risk_type = "State / Region") %>% 
+    select(item, pct_agreement, risk_type),
+  grade_agreement_summary %>% 
+    mutate(item = as.character(factor), risk_type = "YDS Grade") %>% 
+    select(item, pct_agreement, risk_type)
 ) %>%
-  mutate(risk_type = fct_reorder(risk_type, pct_agreement, .fun = median)) %>%
-  ggplot(aes(x = pct_agreement, y = risk_type)) +
+  mutate(risk_type = fct_reorder(risk_type, pct_agreement, .fun = median))
+
+median_lines <- agreement_data %>%
+  group_by(risk_type) %>%
+  summarise(median_val = median(pct_agreement), .groups = "drop")
+
+p <- ggplot(agreement_data, aes(x = pct_agreement, y = risk_type)) +
   geom_jitter(height = 0.15, color = "orange", size = 2.5, alpha = 0.8) +
-  stat_summary(fun = median, geom = "crossbar", width = 0.5,
-               color = "grey30") +
+  geom_segment(
+    data = median_lines,
+    aes(x = median_val, xend = median_val,
+        y = as.numeric(risk_type) - 0.4, yend = as.numeric(risk_type) + 0.4),
+    color = "grey30", linewidth = 1
+  ) +
   scale_x_continuous(limits = c(0, 100), labels = function(x) paste0(x, "%")) +
   labs(
     title    = "% Agreement by Data Type",
@@ -504,6 +574,10 @@ bind_rows(
     y        = NULL
   ) +
   theme_minimal()
+
+ggplotly(p, tooltip = c("x")) %>%
+  config(displayModeBar = FALSE, scrollZoom = FALSE) %>%
+  layout(dragmode = FALSE)
 
 ```
 
